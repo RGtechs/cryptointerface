@@ -5,7 +5,7 @@ from datetime import datetime
 import plotly.graph_objects as go
 
 st.set_page_config(page_title="Crypto Dashboard", layout="wide")
-st.title("Real-time BTC/USD Dashboard")
+st.title("Real-time XBT/USD Dashboard")
 
 exchange = ccxt.kraken()
 
@@ -14,7 +14,7 @@ markets = exchange.load_markets()
 available_symbols = list(markets.keys())
 
 # User input for base and quote currencies
-base_currency = st.text_input("Enter Base Currency (e.g., BTC, ETH)", "BTC").upper()
+base_currency = st.text_input("Enter Base Currency (e.g., XBT, ETH)", "XBT").upper()
 quote_currency = st.text_input("Enter Quote Currency (e.g., USD, EUR)", "USD").upper()
 
 # Construct symbol
@@ -61,10 +61,10 @@ y_min = 0.99999 * df['low'].min()
 y_max = 1.00001 * df['high'].max()
 
 fig = go.Figure()
-fig.add_trace(go.Scatter(x=df['timestamp'], y=df['close'], mode='lines', name='BTC Close Price'))
+fig.add_trace(go.Scatter(x=df['timestamp'], y=df['close'], mode='lines', name='XBT Close Price'))
 
 fig.update_layout(
-    title=f"BTC/USD Price ({selected})",
+    title=f"XBT/USD Price ({selected})",
     yaxis=dict(title="Price ("+ quote_currency + ")", range=[y_min, y_max], fixedrange=True),
     xaxis=dict(title="Time", fixedrange=True),
     template='plotly_dark',
