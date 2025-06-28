@@ -7,10 +7,13 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Crypto Dashboard", layout="wide")
 st.title("Real-time BTC/USDT Dashboard")
 
-exchange = ccxt.binance()
+try:
+    exchange = ccxt.binance()
+    markets = exchange.load_markets()
+except Exception as e:
+    st.error("❌ Could not connect to Binance from Streamlit Cloud. Please try again later or run locally.")
+    st.stop()
 
-# Load available markets from Binance
-markets = exchange.load_markets()
 available_symbols = list(markets.keys())
 
 # User input for base and quote currencies
