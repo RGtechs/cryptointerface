@@ -5,20 +5,17 @@ from datetime import datetime
 import plotly.graph_objects as go
 
 st.set_page_config(page_title="Crypto Dashboard", layout="wide")
-st.title("Real-time BTC/USDT Dashboard")
+st.title("Real-time BTC/USD Dashboard")
 
-try:
-    exchange = ccxt.binance()
-    markets = exchange.load_markets()
-except Exception as e:
-    st.error("❌ Could not connect to Binance from Streamlit Cloud. Please try again later or run locally.")
-    st.stop()
+exchange = ccxt.kraken()
 
+# Load available markets from Binance
+markets = exchange.load_markets()
 available_symbols = list(markets.keys())
 
 # User input for base and quote currencies
 base_currency = st.text_input("Enter Base Currency (e.g., BTC, ETH)", "BTC").upper()
-quote_currency = st.text_input("Enter Quote Currency (e.g., USDT, EUR)", "USDT").upper()
+quote_currency = st.text_input("Enter Quote Currency (e.g., USD, EUR)", "USD").upper()
 
 # Construct symbol
 symbol = f"{base_currency}/{quote_currency}"
@@ -67,7 +64,7 @@ fig = go.Figure()
 fig.add_trace(go.Scatter(x=df['timestamp'], y=df['close'], mode='lines', name='BTC Close Price'))
 
 fig.update_layout(
-    title=f"BTC/USDT Price ({selected})",
+    title=f"BTC/USD Price ({selected})",
     yaxis=dict(title="Price ("+ quote_currency + ")", range=[y_min, y_max], fixedrange=True),
     xaxis=dict(title="Time", fixedrange=True),
     template='plotly_dark',
