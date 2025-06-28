@@ -82,59 +82,63 @@ vol = sum(df['volume'])
 st.metric(label="Volume", value=vol)
 
 order_book = exchange.fetch_order_book(symbol)
-bids = order_book['bids'][:]
-asks = order_book['asks'][:]
+bids = order_book.get('bids', [])
+asks = order_book.get('asks', [])
 
 st.subheader("Order Book (top 500)")
-col1, col2 = st.columns(2)
 
-with col1:
-    st.write("**Bids (Buy Orders)**")
-    st.dataframe(pd.DataFrame(bids, columns=["Price", "Amount"], index=range(1, len(bids)+1)))
+if not bids or not asks:
+    st.warning("⚠️ Δεν υπάρχουν διαθέσιμα δεδομένα Order Book για αυτό το ζεύγος ή από το Kraken αυτή τη στιγμή.")
+else:
+    col1, col2 = st.columns(2)
 
-with col2:
-    st.write("**Asks (Sell Orders)**")
-    st.dataframe(pd.DataFrame(asks, columns=["Price", "Amount"], index=range(1, len(asks)+1)))
+    with col1:
+        st.write("**Bids (Buy Orders)**")
+        st.dataframe(pd.DataFrame(bids, columns=["Price", "Amount"], index=range(1, len(bids)+1)))
 
-import plotly.express as px
+    with col2:
+        st.write("**Asks (Sell Orders)**")
+        st.dataframe(pd.DataFrame(asks, columns=["Price", "Amount"], index=range(1, len(asks)+1)))
 
-total_bid_volume = sum([amount for _, amount in bids])
-total_ask_volume = sum([amount for _, amount in asks])
+    import plotly.express as px
 
-pie_df = pd.DataFrame({
-    "Side": ["🟢 Bids (Buy Volume)", "🔴 Asks (Sell Volume)"],
-    "Volume": [total_bid_volume, total_ask_volume]
-})
+    total_bid_volume = sum([amount for _, amount in bids])
+    total_ask_volume = sum([amount for _, amount in asks])
 
-fig_pie = px.pie(
-    pie_df,
-    names="Side",
-    values="Volume",
-    hole=0.5,
-    color="Side",
-    color_discrete_map={
-        "🟢 Bids (Buy Volume)": "#00cc96",
-        "🔴 Asks (Sell Volume)": "#ff4d4d"
-    }
-)
+    pie_df = pd.DataFrame({
+        "Side": ["🟢 Bids (Buy Volume)", "🔴 Asks (Sell Volume)"],
+        "Volume": [total_bid_volume, total_ask_volume]
+    })
 
-fig_pie.update_traces(
-    textposition="outside",
-    textinfo="label+percent",
-    marker=dict(line=dict(color='#1e1e1e', width=2)),
-    pull=[0.02, 0.02]
-)
+    fig_pie = px.pie(
+        pie_df,
+        names="Side",
+        values="Volume",
+        hole=0.5,
+        color="Side",
+        color_discrete_map={
+            "🟢 Bids (Buy Volume)": "#00cc96",
+            "🔴 Asks (Sell Volume)": "#ff4d4d"
+        }
+    )
 
-fig_pie.update_layout(
-    title_text="📊 Order Book Volume Split",
-    title_font_size=18,
-    title_x=0.0,
-    showlegend=False,
-    paper_bgcolor="#0e1117",
-    plot_bgcolor="#0e1117",
-    font_color="white",
-    margin=dict(t=60, b=20, l=0, r=0),
-    height=320
-)
+    fig_pie.update_traces(
+        textposition="outside",
+        textinfo="label+percent",
+        marker=dict(line=dict(color='#1e1e1e', width=2)),
+        pull=[0.02, 0.02]
+    )
 
-st.plotly_chart(fig_pie, use_container_width=True)
+    fig_pie.update_layout(
+        title_text="📊 Order Book Volume Split",
+        title_font_size=18,
+        title_x=0.0,
+        showlegend=False,
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#0e1117",
+        font_color="white",
+        margin=dict(t=60, b=20, l=0, r=0),
+        height=320
+    )
+
+    st.plotly_chart(fig_pie, use_container_width=True)
