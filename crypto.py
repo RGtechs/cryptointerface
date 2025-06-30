@@ -3,11 +3,33 @@ import ccxt
 import pandas as pd
 from datetime import datetime
 import plotly.graph_objects as go
+import time
+
+st.query_params["refresh"] = int(time.time())
 
 st.set_page_config(page_title="Crypto Dashboard", layout="wide")
 st.title("Real-time BTC/USDT Dashboard")
 
 exchange = ccxt.binance()
+
+def fetch_all_ohlcv(exchange, symbol, timeframe, since, to):
+    all_ohlcv = []
+    while since < to:
+        try:
+            data = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=1000)
+            if not data:
+                break
+            all_ohlcv.extend(data)
+            last_timestamp = data[-1][0]
+            if last_timestamp == since:
+                break  # avoid infinite loop
+            since = last_timestamp + 1
+            time.sleep(exchange.rateLimit / 1000)  # to respect Binance rate limits
+        except Exception as e:
+            st.warning(f"⚠️ Error during data fetch: {e}")
+            break
+    return all_ohlcv
+
 
 # Load available markets from Binance
 markets = exchange.load_markets()
@@ -41,7 +63,7 @@ timeframes = {
     "1 Week": ("5m", timedelta(weeks=1)),
     "1 Month": ("30m", timedelta(days=30)),
     "1 Year": ("1d", timedelta(days=365)),
-    "999 Days": ("1d", timedelta(days=999)),
+    "500 Days": ("1d", timedelta(days=500)),
 }
 
 selected = st.selectbox("Select Time Range", list(timeframes.keys()), index=0)
@@ -50,15 +72,21 @@ tf, delta = timeframes[selected]
 now = exchange.milliseconds()
 if delta is not None:
     since = now - int(delta.total_seconds() * 1000)
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, since=since)
+    ohlcv = fetch_all_ohlcv(exchange, symbol, tf, since, now)
 else:
     ohlcv = exchange.fetch_ohlcv(symbol, timeframe=tf, limit=5000)
 
 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+
+if df.empty:
+    st.error("⚠️ No data returned for the selected timeframe.")
+    st.stop()
+
 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
 
 y_min = 0.99999 * df['low'].min()
 y_max = 1.00001 * df['high'].max()
+
 
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=df['timestamp'], y=df['close'], mode='lines', name='BTC Close Price'))
@@ -77,7 +105,47 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 latest = df.iloc[-1]
-st.metric(label="Price (USD)", value=f"${latest['close']:,.2f}")
+st.metric(label="Price", value=f"{quote_currency} {latest['close']:,.2f}")
+
+# Συγκριτική τιμή από άλλα ανταλλακτήρια
+exchanges_to_compare = {
+    "Coinbase": ccxt.coinbase(),
+    "Kraken": ccxt.kraken(),
+    "Bitfinex": ccxt.bitfinex(),
+    "Kucoin": ccxt.kucoin()
+}
+
+comparison_data = []
+
+for name, ex in exchanges_to_compare.items():
+    try:
+        ex.load_markets()
+        if symbol in ex.symbols:
+            ticker = ex.fetch_ticker(symbol)
+            price = ticker['last']
+            diff = latest['close'] - price
+            comparison_data.append({
+                "Exchange": name,
+                "Price": price,
+                "Διαφορά με Binance": diff
+            })
+        else:
+            comparison_data.append({
+                "Exchange": name,
+                "Price": "N/A",
+                "Διαφορά με Binance": "N/A"
+            })
+    except Exception as e:
+        comparison_data.append({
+            "Exchange": name,
+            "Price": "Error",
+            "Διαφορά με Binance": str(e)
+        })
+
+# Προβολή πίνακα
+st.subheader("Σύγκριση Τιμών με άλλα Ανταλλακτήρια")
+st.dataframe(pd.DataFrame(comparison_data))
+
 vol = sum(df['volume'])
 st.metric(label="Volume", value=vol)
 
@@ -85,7 +153,7 @@ order_book = exchange.fetch_order_book(symbol)
 bids = order_book['bids'][:]
 asks = order_book['asks'][:]
 
-st.subheader("Order Book (top 500)")
+st.subheader("Order Book (top 100)")
 col1, col2 = st.columns(2)
 
 with col1:
@@ -138,3 +206,25 @@ fig_pie.update_layout(
 )
 
 st.plotly_chart(fig_pie, use_container_width=True)
+
+
+refresh_interval = 60
+
+# Toggle for enabling auto-refresh
+enable_refresh = st.checkbox("🔁 Enable Auto-Refresh (every 60s)", value=True)
+
+# Store the time of last refresh
+if "last_refresh" not in st.session_state:
+    st.session_state.last_refresh = time.time()
+
+if enable_refresh:
+    now = time.time()
+    elapsed = now - st.session_state.last_refresh
+    remaining = int(refresh_interval - elapsed)
+
+    with st.empty():
+        for seconds in range(refresh_interval, 0, -1):
+            st.info(f"🔄 Auto-refreshing in {seconds} seconds...")
+            time.sleep(1)
+    st.session_state.last_refresh = now
+    st.rerun()
