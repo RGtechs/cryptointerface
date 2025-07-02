@@ -87,27 +87,50 @@ df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
 y_min = 0.99999 * df['low'].min()
 y_max = 1.00001 * df['high'].max()
 
+latest = df.iloc[-1]
+first = df.iloc[0]
+percentage = (latest['close'] - first['close']) * 100 / first['close']
+
+def showpercentage(pct: float) -> str:
+    color = "green" if pct > 0 else "red"
+    sign = "+" if pct > 0 else ""
+    return f"<span style='color:{color}'>{sign}{pct:.2f}%</span>"
+
 
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=df['timestamp'], y=df['close'], mode='lines', name='BTC Close Price'))
 
 fig.update_layout(
-    title=f"BTC/USDT Price ({selected})",
-    yaxis=dict(title="Price ("+ quote_currency + ")", range=[y_min, y_max], fixedrange=True),
-    xaxis=dict(title="Time", fixedrange=True),
+    title={
+        "text": f"{base_currency}/{quote_currency} Price ({selected}) {showpercentage(percentage)}",
+        "x": 0.5,
+        "xanchor": "center"
+    },
+    yaxis=dict(
+        title=f"Price ({quote_currency})",
+        range=[y_min, y_max], 
+        rangemode='tozero',
+        fixedrange=False       
+    ),
+    xaxis=dict(
+        title="Time",
+        range=[df['timestamp'].min(), df['timestamp'].max()],
+        rangemode='tozero',
+        fixedrange=False
+    ),
     template='plotly_dark',
     height=400,
-    dragmode=False,
+    dragmode='zoom', 
     margin=dict(l=0, r=0, t=40, b=0),
-    modebar_remove=["zoom", "zoomIn", "zoomOut", "autoScale", "pan", "resetScale"]
+    modebar_remove=["zoomIn2d", "zoomOut2d"]
 )
 
 st.plotly_chart(fig, use_container_width=True)
 
-latest = df.iloc[-1]
 st.metric(label="Price", value=f"{quote_currency} {latest['close']:,.2f}")
 
-# Συγκριτική τιμή από άλλα ανταλλακτήρια
+import threading
+
 exchanges_to_compare = {
     "Coinbase": ccxt.coinbase(),
     "Kraken": ccxt.kraken(),
@@ -117,37 +140,100 @@ exchanges_to_compare = {
 
 comparison_data = []
 
-for name, ex in exchanges_to_compare.items():
+@st.cache_data(ttl=15)
+def get_price_from_exchange(name, symbol):
+    ex = exchanges_to_compare[name]
     try:
-        ex.load_markets()
-        if symbol in ex.symbols:
-            ticker = ex.fetch_ticker(symbol)
-            price = ticker['last']
-            diff = latest['close'] - price
-            comparison_data.append({
-                "Exchange": name,
-                "Price": price,
-                "Διαφορά με Binance": diff
-            })
-        else:
-            comparison_data.append({
-                "Exchange": name,
-                "Price": "N/A",
-                "Διαφορά με Binance": "N/A"
-            })
+        ticker = ex.fetch_ticker(symbol)
+        price = ticker['last']
+        diff = latest['close'] - price
+        percent = (diff / price) * 100
+
+        return {
+            "Exchange": name,
+            "Price": f"{price:,.2f}",
+            "Difference with Binance": color_diff(diff),
+            "Percentage Difference": color_percent(percent)
+        }
     except Exception as e:
-        comparison_data.append({
+        return {
             "Exchange": name,
             "Price": "Error",
-            "Διαφορά με Binance": str(e)
-        })
+            "Difference with Binance": "Error",
+            "Percentage Difference": str(e)
+        }
 
-# Προβολή πίνακα
-st.subheader("Σύγκριση Τιμών με άλλα Ανταλλακτήρια")
-st.dataframe(pd.DataFrame(comparison_data))
+def color_diff(value):
+    color = "green" if value > 0 else "red"
+    return f"<span style='color:{color}'>{value:,.2f}</span>"
+
+def color_percent(value):
+    color = "green" if value > 0 else "red"
+    sign = "+" if value > 0 else ""
+    return f"<span style='color:{color}'>{sign}{value:.2f}%</span>"
+
+def fetch_and_append(name):
+    result = get_price_from_exchange(name, symbol)
+    comparison_data.append(result)
+
+# Start threads
+threads = []
+for name in exchanges_to_compare:
+    t = threading.Thread(target=fetch_and_append, args=(name,))
+    t.start()
+    threads.append(t)
+
+# Wait for all threads to complete
+for t in threads:
+    t.join()
+
+# Convert to DataFrame and apply formatting
+df_comp = pd.DataFrame(comparison_data)
+df_comp.index = df_comp.index + 1  # Make index start at 1
+
+st.subheader("Comparing values with other exchanges")
+st.write(df_comp.to_html(escape=False, index=True), unsafe_allow_html=True)
+
 
 vol = sum(df['volume'])
 st.metric(label="Volume", value=vol)
+
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# Calculate volatility
+df['volatility'] = df['close'].rolling(window=10).std()
+
+# Create subplot with secondary Y axis
+fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+# Main price trace
+fig.add_trace(
+    go.Scatter(x=df['timestamp'], y=df['close'], name='Close Price'),
+    secondary_y=False
+)
+
+# Volatility trace
+fig.add_trace(
+    go.Scatter(x=df['timestamp'], y=df['volatility'], name='Volatility'),
+    secondary_y=True
+)
+
+# Update layout
+fig.update_layout(
+    title="Price and Volatility",
+    xaxis_title="Time",
+    template='plotly_dark',
+    height=500,
+    modebar_remove=["zoomIn2d", "zoomOut2d"]
+)
+
+# Y-axis titles
+fig.update_yaxes(title_text="Price", secondary_y=False)
+fig.update_yaxes(title_text="Volatility", secondary_y=True)
+
+# Display in Streamlit
+st.plotly_chart(fig, use_container_width=True)
 
 order_book = exchange.fetch_order_book(symbol)
 bids = order_book['bids'][:]
