@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 import plotly.graph_objects as go
 import time
-
+from streamlit.components.v1 import declare_component
 st.query_params["refresh"] = int(time.time())
 
 st.set_page_config(page_title="Crypto Dashboard", layout="wide")
@@ -127,106 +127,218 @@ fig.update_layout(
 
 st.plotly_chart(fig, use_container_width=True)
 
-st.metric(label="Price", value=f"{quote_currency} {latest['close']:,.2f}")
-
+now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+st.metric(label=f"Price (as of {now})", value=f"{quote_currency} {latest['close']:,.2f}")
 
 vol = sum(df['volume'])
 st.metric(label="Volume", value=vol)
 
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from ta.volume import OnBalanceVolumeIndicator
+from ta.momentum import RSIIndicator
+import numpy as np
 
-# Calculate volatility
-df['volatility'] = df['close'].rolling(window=10).std()
+st.header("Technical Indicators")
 
-# Create subplot with secondary Y axis
-fig = make_subplots(specs=[[{"secondary_y": True}]])
+# --- OBV ---
+obv = OnBalanceVolumeIndicator(close=df["close"], volume=df["volume"]).on_balance_volume()
+fig_obv = go.Figure()
+fig_obv.add_trace(go.Scatter(x=df["timestamp"], y=obv, name="OBV", line=dict(color='aqua')))
+fig_obv.update_layout(title="On-Balance Volume (OBV)", template="plotly_dark", height=300)
+st.plotly_chart(fig_obv, use_container_width=True)
 
-# Main price trace
-fig.add_trace(
-    go.Scatter(x=df['timestamp'], y=df['close'], name='Close Price'),
-    secondary_y=False
-)
+# --- CVD (simplified) ---
+df["delta"] = df["close"].diff()
+df["buy_volume"] = np.where(df["delta"] > 0, df["volume"], 0)
+df["sell_volume"] = np.where(df["delta"] < 0, df["volume"], 0)
+df["cvd"] = (df["buy_volume"] - df["sell_volume"]).cumsum()
 
-# Volatility trace
-fig.add_trace(
-    go.Scatter(x=df['timestamp'], y=df['volatility'], name='Volatility'),
-    secondary_y=True
-)
+fig_cvd = go.Figure()
+fig_cvd.add_trace(go.Scatter(x=df["timestamp"], y=df["cvd"], name="CVD", line=dict(color='orange')))
+fig_cvd.update_layout(title="Cumulative Volume Delta (CVD)", template="plotly_dark", height=300)
+st.plotly_chart(fig_cvd, use_container_width=True)
 
-# Update layout
-fig.update_layout(
-    title="Price and Volatility",
-    xaxis_title="Time",
-    template='plotly_dark',
-    height=500,
-    modebar_remove=["zoomIn2d", "zoomOut2d"]
-)
+# --- Volume Bar Chart ---
+fig_vol = go.Figure()
+fig_vol.add_trace(go.Bar(x=df["timestamp"], y=df["volume"], marker_color="gray", name="Volume"))
+fig_vol.update_layout(title="Volume", template="plotly_dark", height=300)
+st.plotly_chart(fig_vol, use_container_width=True)
 
-# Y-axis titles
-fig.update_yaxes(title_text="Price", secondary_y=False)
-fig.update_yaxes(title_text="Volatility", secondary_y=True)
+# --- RSI ---
+rsi = RSIIndicator(close=df["close"], window=14).rsi()
+fig_rsi = go.Figure()
+fig_rsi.add_trace(go.Scatter(x=df["timestamp"], y=rsi, name="RSI", line=dict(color='lime')))
+fig_rsi.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought", annotation_position="top left")
+fig_rsi.add_hline(y=30, line_dash="dash", line_color="blue", annotation_text="Oversold", annotation_position="bottom left")
+fig_rsi.update_layout(title="Relative Strength Index (RSI)", template="plotly_dark", height=300)
+st.plotly_chart(fig_rsi, use_container_width=True)
 
-# Display in Streamlit
-st.plotly_chart(fig, use_container_width=True)
 
-order_book = exchange.fetch_order_book(symbol)
-bids = order_book['bids'][:]
-asks = order_book['asks'][:]
 
-st.subheader("Order Book (top 100)")
-col1, col2 = st.columns(2)
 
-with col1:
-    st.write("**Bids (Buy Orders)**")
-    st.dataframe(pd.DataFrame(bids, columns=["Price", "Amount"], index=range(1, len(bids)+1)))
-
-with col2:
-    st.write("**Asks (Sell Orders)**")
-    st.dataframe(pd.DataFrame(asks, columns=["Price", "Amount"], index=range(1, len(asks)+1)))
 
 import plotly.express as px
 
-total_bid_volume = sum([amount for _, amount in bids])
-total_ask_volume = sum([amount for _, amount in asks])
+# Fetch order book
+order_book = exchange.fetch_order_book(symbol)
+bids_all = order_book['bids']   # All bids for charts
+asks_all = order_book['asks']   # All asks for charts
 
+# For display only (first 100 rows for performance)
+bids_display = bids_all[:100]
+asks_display = asks_all[:100]
+
+# --- THRESHOLD CONTROLS ---
+st.sidebar.header("🔧 Order Size Thresholds")
+small_max = st.sidebar.slider("Max size for Small", 0.01, 5.0, 0.5)
+medium_max = st.sidebar.slider("Max size for Medium", small_max, 50.0, 5.0)
+
+# --- CATEGORIZATION FUNCTION FOR VOLUME ---
+def categorize_orders(orders):
+    categories = {"Small": 0, "Medium": 0, "Big": 0}
+    for _, amount in orders:
+        if amount < small_max:
+            categories["Small"] += amount
+        elif amount < medium_max:
+            categories["Medium"] += amount
+        else:
+            categories["Big"] += amount
+    return categories
+
+# --- CATEGORIZATION FUNCTION FOR COUNT ---
+def count_orders(orders):
+    count = {"Small": 0, "Medium": 0, "Big": 0}
+    for _, amount in orders:
+        if amount < small_max:
+            count["Small"] += 1
+        elif amount < medium_max:
+            count["Medium"] += 1
+        else:
+            count["Big"] += 1
+    return count
+
+# Categorize full order book for volume
+bid_vol_cat = categorize_orders(bids_all)
+ask_vol_cat = categorize_orders(asks_all)
+
+# Categorize full order book for count (for the extra bar chart you want)
+bid_count_cat = count_orders(bids_all)
+ask_count_cat = count_orders(asks_all)
+
+# --- PIE CHART DATA (volume-based) ---
 pie_df = pd.DataFrame({
-    "Side": ["🟢 Bids (Buy Volume)", "🔴 Asks (Sell Volume)"],
-    "Volume": [total_bid_volume, total_ask_volume]
+    "Category": [
+        "Small Bids", "Medium Bids", "Big Bids",
+        "Small Asks", "Medium Asks", "Big Asks"
+    ],
+    "Volume": [
+        bid_vol_cat["Small"], bid_vol_cat["Medium"], bid_vol_cat["Big"],
+        ask_vol_cat["Small"], ask_vol_cat["Medium"], ask_vol_cat["Big"]
+    ]
 })
 
 fig_pie = px.pie(
     pie_df,
-    names="Side",
+    names="Category",
     values="Volume",
-    hole=0.5,
-    color="Side",
+    hole=0.45,
+    color="Category",
     color_discrete_map={
-        "🟢 Bids (Buy Volume)": "#00cc96",
-        "🔴 Asks (Sell Volume)": "#ff4d4d"
+        "Small Bids": "#00cc96",
+        "Medium Bids": "#f5c518",
+        "Big Bids": "#0074D9",
+        "Small Asks": "#ff4d4d",
+        "Medium Asks": "#FF851B",
+        "Big Asks": "#B10DC9"
     }
 )
 
 fig_pie.update_traces(
-    textposition="outside",
-    textinfo="label+percent",
-    marker=dict(line=dict(color='#1e1e1e', width=2)),
-    pull=[0.02, 0.02]
+    textinfo="percent",
+    hoverinfo="label+value+percent",
+    pull=[0.03] * 6,
+    sort=False,
+    marker=dict(line=dict(color='#1e1e1e', width=2))
 )
 
 fig_pie.update_layout(
-    title_text="📊 Order Book Volume Split",
-    title_font_size=18,
-    title_x=0.0,
-    showlegend=False,
+    title_text="Order Volume Split by Type & Size",
+    title_x=0.02,
+    showlegend=True,
+    height=360,
+    legend_title="Category",
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=-0.2,
+        xanchor="center",
+        x=0.5,
+        font=dict(size=11)
+    ),
+    margin=dict(t=50, b=20, l=10, r=10),
     paper_bgcolor="#0e1117",
     plot_bgcolor="#0e1117",
-    font_color="white",
-    margin=dict(t=60, b=20, l=0, r=0),
-    height=320
+    font_color="white"
 )
 
+# --- BAR CHART VOLUME ---
+bar_vol_df = pd.DataFrame({
+    "Size": ["Small", "Medium", "Big"],
+    "Bids": [bid_vol_cat["Small"], bid_vol_cat["Medium"], bid_vol_cat["Big"]],
+    "Asks": [ask_vol_cat["Small"], ask_vol_cat["Medium"], ask_vol_cat["Big"]]
+})
+
+fig_bar_vol = go.Figure(data=[
+    go.Bar(name='Bids', x=bar_vol_df["Size"], y=bar_vol_df["Bids"], marker_color="#00cc96"),
+    go.Bar(name='Asks', x=bar_vol_df["Size"], y=bar_vol_df["Asks"], marker_color="#ff4d4d")
+])
+fig_bar_vol.update_layout(
+    barmode='group',
+    title_text="Order Volume by Size",
+    xaxis_title="Order Size",
+    yaxis_title="Volume",
+    height=320,
+    template="plotly_dark",
+    margin=dict(t=50, b=20),
+)
+
+# --- BAR CHART COUNT ---
+bar_count_df = pd.DataFrame({
+    "Size": ["Small", "Medium", "Big"],
+    "Bids": [bid_count_cat["Small"], bid_count_cat["Medium"], bid_count_cat["Big"]],
+    "Asks": [ask_count_cat["Small"], ask_count_cat["Medium"], ask_count_cat["Big"]]
+})
+
+fig_bar_count = go.Figure(data=[
+    go.Bar(name='Bids', x=bar_count_df["Size"], y=bar_count_df["Bids"], marker_color="#00cc96"),
+    go.Bar(name='Asks', x=bar_count_df["Size"], y=bar_count_df["Asks"], marker_color="#ff4d4d")
+])
+fig_bar_count.update_layout(
+    barmode='group',
+    title_text="Order Count by Size",
+    xaxis_title="Order Size",
+    yaxis_title="Count",
+    height=320,
+    template="plotly_dark",
+    margin=dict(t=50, b=20),
+)
+
+# --- DISPLAY ---
+st.subheader("Order Book (Top 100)")
+
+col1, col2 = st.columns(2)
+with col1:
+    st.write("Bids (Buy Orders)")
+    st.dataframe(pd.DataFrame(bids_display, columns=["Price", "Amount"], index=range(1, len(bids_display)+1)))
+with col2:
+    st.write("Asks (Sell Orders)")
+    st.dataframe(pd.DataFrame(asks_display, columns=["Price", "Amount"], index=range(1, len(asks_display)+1)))
+
 st.plotly_chart(fig_pie, use_container_width=True)
+st.plotly_chart(fig_bar_vol, use_container_width=True)
+st.plotly_chart(fig_bar_count, use_container_width=True)
+
+
+
 
 
 refresh_interval = 60
