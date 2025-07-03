@@ -3,3 +3,6 @@ ccxt
 pandas
 datetime
 plotly
+ta.volume
+ta.momentum
+numpy
