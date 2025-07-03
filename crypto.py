@@ -7,7 +7,7 @@ import time
 st.query_params["refresh"] = int(time.time())
 
 st.set_page_config(page_title="Crypto Dashboard", layout="wide")
-st.title("Real-time BTC/USDT Dashboard")
+st.title("Real-time Crypto Exchange Dashboard")
 
 exchange = ccxt.binance()
 
@@ -336,6 +336,111 @@ st.plotly_chart(fig_pie, use_container_width=True)
 st.plotly_chart(fig_bar_vol, use_container_width=True)
 st.plotly_chart(fig_bar_count, use_container_width=True)
 
+
+
+st.header("TimeAlpha Analysis")
+
+range_options = {
+    "500 Days": timedelta(days=500),
+    "1 Year": timedelta(days=365),
+    "6 Months": timedelta(days=180),
+    "3 Months": timedelta(days=90)
+}
+selected_range_label = st.selectbox("Time Range for Hourly Strength Analysis", list(range_options.keys()))
+selected_delta = range_options[selected_range_label]
+
+since_ms = exchange.milliseconds() - int(selected_delta.total_seconds() * 1000)
+ohlcv = fetch_all_ohlcv(exchange, symbol, '30m', since_ms, exchange.milliseconds())
+df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
+
+
+df['hour_half'] = df['datetime'].dt.strftime('%H:%M')  # e.g. "13:00", "13:30"
+
+# Group by date
+df['date'] = df['datetime'].dt.date
+daily_groups = df.groupby('date')
+df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
+
+# Floor to 30m intervals
+df['datetime'] = df['datetime'].dt.floor('30T')
+
+# Assign a "window_start" that begins at 00:00 UTC
+df['window_start'] = df['datetime'].dt.floor('D')  # Floor to nearest 00:00 of that day
+
+# Group by 24-hour blocks
+daily_groups = df.groupby('window_start')
+
+score_map = {}
+
+for window_start, group in daily_groups:
+    if len(group) != 48:
+        continue  # Only process full days
+
+    ranked = group.sort_values('close').reset_index(drop=True)
+
+    for rank, row in enumerate(ranked.itertuples(index=False), 1):
+        slot = row.datetime.strftime('%H:%M')  # use floor'd half-hour
+        score_map.setdefault(slot, []).append(rank)
+
+df = df.sort_values('datetime')
+
+score_summary = [
+    (slot, (sum(scores)/len(scores) - 1) / 4.7)
+    for slot, scores in score_map.items()
+]
+score_summary.sort(key=lambda x: x[1], reverse=True)
+
+
+top_24 = score_summary[:24]
+bottom_24 = score_summary[-24:]
+
+df_top = pd.DataFrame(top_24, columns=["Time", "ChronoAlpha score"])
+df_top.index = df_top.index + 1
+
+df_bottom = pd.DataFrame(bottom_24, columns=["Time", "ChronoAlpha score"])
+df_bottom = df_bottom.sort_values("ChronoAlpha score", ascending=True)
+df_bottom.index = 24 - df_bottom.index
+
+col1, col2 = st.columns(2)
+with col1:
+    st.subheader("Top 24 High-Value Intervals")
+    st.dataframe(df_top)
+
+with col2:
+    st.subheader("Top 24 Low-Value Intervals")
+    st.dataframe(df_bottom)
+
+normalized_scores = [(slot, avg_score) for slot, avg_score in score_summary]
+normalized_scores.sort(key=lambda x: x[0])  # Sort by time of day
+
+score_df = pd.DataFrame(normalized_scores, columns=["Time", "Normalized Score"])
+
+y_min = min(score_df["Normalized Score"]) * 0.999
+y_max = max(score_df["Normalized Score"]) * 1.001
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(
+    x=score_df["Time"],
+    y=score_df["Normalized Score"],
+    mode='lines+markers',
+    line=dict(color="#00cc96"),
+    name="Score"
+))
+
+fig.update_layout(
+    title="⏰ Normalized Hourly Value Score (0–1)",
+    xaxis_title="Time of Day",
+    yaxis_title="TimeAlpha Score",
+    template="plotly_dark",
+    height=350,
+    margin=dict(t=50, b=20),
+    xaxis=dict(tickangle=45),
+    yaxis=dict(range=[y_min, y_max]),
+    modebar_remove=["zoomIn2d", "zoomOut2d"]
+)
+
+st.plotly_chart(fig, use_container_width=True)
 
 
 
