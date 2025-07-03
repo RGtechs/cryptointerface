@@ -4,7 +4,6 @@ import pandas as pd
 from datetime import datetime
 import plotly.graph_objects as go
 import time
-from streamlit.components.v1 import declare_component
 st.query_params["refresh"] = int(time.time())
 
 st.set_page_config(page_title="Crypto Dashboard", layout="wide")
