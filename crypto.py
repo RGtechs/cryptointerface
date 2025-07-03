@@ -392,23 +392,23 @@ score_summary = [
 score_summary.sort(key=lambda x: x[1], reverse=True)
 
 
-top_24 = score_summary[:24]
-bottom_24 = score_summary[-24:]
+top_24 = score_summary[:10]
+bottom_24 = score_summary[-10:]
 
 df_top = pd.DataFrame(top_24, columns=["Time", "ChronoAlpha score"])
 df_top.index = df_top.index + 1
 
 df_bottom = pd.DataFrame(bottom_24, columns=["Time", "ChronoAlpha score"])
 df_bottom = df_bottom.sort_values("ChronoAlpha score", ascending=True)
-df_bottom.index = 24 - df_bottom.index
+df_bottom.index = 10 - df_bottom.index
 
 col1, col2 = st.columns(2)
 with col1:
-    st.subheader("Top 24 High-Value Intervals")
+    st.subheader("Top 10 High-Value Intervals")
     st.dataframe(df_top)
 
 with col2:
-    st.subheader("Top 24 Low-Value Intervals")
+    st.subheader("Top 10 Low-Value Intervals")
     st.dataframe(df_bottom)
 
 normalized_scores = [(slot, avg_score) for slot, avg_score in score_summary]
@@ -429,8 +429,8 @@ fig.add_trace(go.Scatter(
 ))
 
 fig.update_layout(
-    title="⏰ Normalized Hourly Value Score (0–1)",
-    xaxis_title="Time of Day",
+    title="Normalized Hourly Value Score (0–1)",
+    xaxis_title="Time of Day (UTC)",
     yaxis_title="TimeAlpha Score",
     template="plotly_dark",
     height=350,
