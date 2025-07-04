@@ -112,7 +112,7 @@ fig.update_layout(
         fixedrange=False       
     ),
     xaxis=dict(
-        title="Time",
+        title="Time (UTC)",
         range=[df['timestamp'].min(), df['timestamp'].max()],
         rangemode='tozero',
         fixedrange=False
@@ -338,7 +338,7 @@ st.plotly_chart(fig_bar_count, use_container_width=True)
 
 
 
-st.header("TimeAlpha Analysis")
+st.header("ChronoAlpha Analysis")
 
 range_options = {
     "500 Days": timedelta(days=500),
@@ -353,69 +353,65 @@ since_ms = exchange.milliseconds() - int(selected_delta.total_seconds() * 1000)
 ohlcv = fetch_all_ohlcv(exchange, symbol, '30m', since_ms, exchange.milliseconds())
 df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
 df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
+df['datetime'] = df['datetime'].dt.floor('30min')
+df['window_start'] = df['datetime'].dt.floor('D')
 
-
-df['hour_half'] = df['datetime'].dt.strftime('%H:%M')  # e.g. "13:00", "13:30"
-
-# Group by date
-df['date'] = df['datetime'].dt.date
-daily_groups = df.groupby('date')
-df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
-
-# Floor to 30m intervals
-df['datetime'] = df['datetime'].dt.floor('30T')
-
-# Assign a "window_start" that begins at 00:00 UTC
-df['window_start'] = df['datetime'].dt.floor('D')  # Floor to nearest 00:00 of that day
-
-# Group by 24-hour blocks
 daily_groups = df.groupby('window_start')
 
 score_map = {}
+sell_map = {}
+buy_map = {}
 
 for window_start, group in daily_groups:
     if len(group) != 48:
-        continue  # Only process full days
+        continue
 
     ranked = group.sort_values('close').reset_index(drop=True)
-
     for rank, row in enumerate(ranked.itertuples(index=False), 1):
-        slot = row.datetime.strftime('%H:%M')  # use floor'd half-hour
+        slot = row.datetime.strftime('%H:%M')
         score_map.setdefault(slot, []).append(rank)
 
-df = df.sort_values('datetime')
+    max_close = group['close'].max()
+    min_close = group['close'].min()
+    price_range = max_close - min_close
+    if price_range == 0:
+        continue
 
+    for _, row in group.iterrows():
+        slot = row['datetime'].strftime('%H:%M')
+        close_price = row['close']
+        sell_score = (close_price - min_close) / price_range
+        buy_score = 1 - sell_score
+        sell_map.setdefault(slot, []).append(sell_score)
+        buy_map.setdefault(slot, []).append(buy_score)
+
+# ChronoAlpha (position-based)
 score_summary = [
     (slot, (sum(scores)/len(scores) - 1) / 4.7)
     for slot, scores in score_map.items()
 ]
 score_summary.sort(key=lambda x: x[1], reverse=True)
+df_top = pd.DataFrame(score_summary[:10], columns=["Time (UTC)", "ChronoAlpha Score"])
+df_top.index += 1
 
+df_bottom = pd.DataFrame(score_summary[-10:], columns=["Time (UTC)", "ChronoAlpha Score"])
+df_bottom = df_bottom.sort_values("ChronoAlpha Score", ascending=True)
+df_bottom.index = range(1, 11)
 
-top_24 = score_summary[:10]
-bottom_24 = score_summary[-10:]
-
-df_top = pd.DataFrame(top_24, columns=["Time", "ChronoAlpha score"])
-df_top.index = df_top.index + 1
-
-df_bottom = pd.DataFrame(bottom_24, columns=["Time", "ChronoAlpha score"])
-df_bottom = df_bottom.sort_values("ChronoAlpha score", ascending=True)
-df_bottom.index = 10 - df_bottom.index
-
+# Display top/bottom score table
+st.subheader("ChronoAlpha: Time-Based Strength")
 col1, col2 = st.columns(2)
 with col1:
-    st.subheader("Top 10 High-Value Intervals")
+    st.markdown("**Top 10 High-Value Intervals**")
     st.dataframe(df_top)
 
 with col2:
-    st.subheader("Top 10 Low-Value Intervals")
+    st.markdown("**Top 10 Low-Value Intervals**")
     st.dataframe(df_bottom)
 
-normalized_scores = [(slot, avg_score) for slot, avg_score in score_summary]
-normalized_scores.sort(key=lambda x: x[0])  # Sort by time of day
-
+# Line chart (normalized scores)
+normalized_scores = sorted(score_summary, key=lambda x: x[0])
 score_df = pd.DataFrame(normalized_scores, columns=["Time", "Normalized Score"])
-
 y_min = min(score_df["Normalized Score"]) * 0.999
 y_max = max(score_df["Normalized Score"]) * 1.001
 
@@ -427,11 +423,10 @@ fig.add_trace(go.Scatter(
     line=dict(color="#00cc96"),
     name="Score"
 ))
-
 fig.update_layout(
     title="Normalized Hourly Value Score (0–1)",
     xaxis_title="Time of Day (UTC)",
-    yaxis_title="TimeAlpha Score",
+    yaxis_title="ChronoAlpha Score",
     template="plotly_dark",
     height=350,
     margin=dict(t=50, b=20),
@@ -439,8 +434,58 @@ fig.update_layout(
     yaxis=dict(range=[y_min, y_max]),
     modebar_remove=["zoomIn2d", "zoomOut2d"]
 )
-
 st.plotly_chart(fig, use_container_width=True)
+
+# Sell/buy score transformation
+scaled_sell_scores = [
+    (slot, round((sum(scores) / len(scores)) * 10, 3))
+    for slot, scores in sorted(sell_map.items(), key=lambda x: sum(x[1]) / len(x[1]), reverse=True)
+]
+scaled_buy_scores = list(reversed(scaled_sell_scores))
+
+df_sell = pd.DataFrame(scaled_sell_scores[:10], columns=["Time (UTC)", "ChronoAlpha Score"])
+df_sell.index += 1
+
+df_buy = pd.DataFrame(scaled_buy_scores[:10], columns=["Time (UTC)", "ChronoAlpha Score"])
+df_buy.index += 1
+
+st.subheader("Improved ChronoAlpha Analysis")
+col3, col4 = st.columns(2)
+with col3:
+    st.markdown("**Top 10 Selling Intervals**")
+    st.dataframe(df_sell)
+
+with col4:
+    st.markdown("**Top 10 Buying Intervals**")
+    st.dataframe(df_buy)
+
+# Final chart
+combined_scores = sorted(scaled_sell_scores, key=lambda x: x[0])
+score_df = pd.DataFrame(combined_scores, columns=["Time", "ChronoAlpha Score"])
+y_min = min(score_df["ChronoAlpha Score"]) * 0.98
+y_max = max(score_df["ChronoAlpha Score"]) * 1.02
+
+fig2 = go.Figure()
+fig2.add_trace(go.Scatter(
+    x=score_df["Time"],
+    y=score_df["ChronoAlpha Score"],
+    mode='lines+markers',
+    line=dict(color="#636efa"),
+    name="ChronoAlpha Score"
+))
+fig2.update_layout(
+    title="ChronoAlpha Score by Time of Day (0–10 Scale)",
+    xaxis_title="Time of Day (UTC)",
+    yaxis_title="ChronoAlpha Score",
+    template="plotly_dark",
+    height=350,
+    margin=dict(t=50, b=20),
+    xaxis=dict(tickangle=45),
+    yaxis=dict(range=[y_min, y_max]),
+    modebar_remove=["zoomIn2d", "zoomOut2d"]
+)
+st.plotly_chart(fig2, use_container_width=True)
+
 
 
 
